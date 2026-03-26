@@ -37,9 +37,7 @@ jobs:
       - name: Run Amazon Egypt Scraper
         run: |
           cd $GITHUB_WORKSPACE
-          scrapy crawl amazon_eg
-        env:
-          SCRAPY_SETTINGS_MODULE: amazon_scraper.settings
+          PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg
 
       - name: Show output summary
         run: |
