@@ -224,16 +224,28 @@ class AmazonEgyptSpider(scrapy.Spider):
                 "#acBadge_feature_div, .ac-badge-wrapper"
             ).get() else "No"
 
-            best_seller_rank = response.css(
-                "#SalesRank td::text, #SalesRank *::text"
-            ).getall()
-            best_seller_rank = " ".join(best_seller_rank).strip()
-            best_seller_rank = re.sub(r"\s+", " ", best_seller_rank)[:200] if best_seller_rank else ""
+            # best_seller_rank — check tech_specs first, then page elements
+            best_seller_rank = _spec(["best sellers rank", "bestsellers rank", "أكثر مبيعاً"])
+            if not best_seller_rank:
+                bsr_texts = response.css(
+                    "#SalesRank td::text, #SalesRank *::text, "
+                    "#detailBulletsWrapper_feature_div li::text, "
+                    "#detailBulletsWrapper_feature_div span::text"
+                ).getall()
+                bsr_combined = " ".join(bsr_texts)
+                if "best seller" in bsr_combined.lower() or "أكثر مبيعاً" in bsr_combined.lower():
+                    best_seller_rank = re.sub(r"\s+", " ", bsr_combined).strip()[:200]
 
-            coupon = response.css(
-                "#couponBadge_feature_div span::text, "
-                "label.couponText::text"
-            ).get(default="").strip()
+            # coupon — try multiple selectors
+            coupon = (
+                response.css("#couponBadge_feature_div .a-color-price::text").get()
+                or response.css("#couponFeatureDivId .a-color-price::text").get()
+                or response.css("#vlptContainer .a-color-price::text").get()
+                or response.css(".couponBadge::text").get()
+                or response.css("#couponText::text").get()
+                or ""
+            )
+            coupon = coupon.strip()
 
             # ── Shipping & seller ─────────────────────────────────────────────
             full_delivery_text = " ".join(
@@ -259,25 +271,35 @@ class AmazonEgyptSpider(scrapy.Spider):
                 "i.a-icon-prime, #primeBadge_feature_div, #pe-our-price-text"
             ).get() else "No"
 
+            # ships_from / sold_by — scan all buybox rows by text content
             ships_from = "N/A"
             sold_by    = "N/A"
-            for row in response.css("#tabular-buybox .tabular-buybox-container > div"):
-                label = row.css(".tabular-buybox-text:first-child span::text").get(default="").strip()
-                value = row.css(
-                    ".tabular-buybox-text:last-child span::text, "
-                    ".tabular-buybox-text:last-child a::text"
-                ).get(default="").strip()
-                if not value:
+            buybox_rows = response.css(
+                "#tabular-buybox .a-row, "
+                "#tabular-buybox tr, "
+                "#tabular-buybox .tabular-buybox-container > div"
+            )
+            for row in buybox_rows:
+                texts = [t.strip() for t in row.css("::text").getall() if t.strip()]
+                if len(texts) < 2:
                     continue
-                ll = label.lower()
-                if "ships from" in ll or "يشحن" in ll:
-                    ships_from = value
-                elif "sold by" in ll or "يباع" in ll:
-                    sold_by = value
+                label_text = texts[0].lower()
+                value_text = texts[-1]
+                if "ships from" in label_text or "يشحن" in label_text:
+                    ships_from = value_text
+                elif "sold by" in label_text or "يباع" in label_text:
+                    sold_by = value_text
 
+            # fallbacks
+            if ships_from == "N/A":
+                ships_from = response.css(
+                    "#shipsFromSoldBy_feature_div span::text"
+                ).get(default="N/A").strip()
             if sold_by == "N/A":
                 sold_by = response.css(
-                    "#merchant-info a::text, #sellerProfileTriggerId::text"
+                    "#merchant-info a::text, "
+                    "#sellerProfileTriggerId::text, "
+                    "#soldByThirdParty a::text"
                 ).get(default="N/A").strip()
 
             # ── Yield item ────────────────────────────────────────────────────
