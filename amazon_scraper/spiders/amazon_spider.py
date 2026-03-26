@@ -2,24 +2,20 @@ import scrapy
 import re
 from scrapy.exceptions import CloseSpider
 
-PRODUCT_LIMIT = 500
+PRODUCT_LIMIT = 5000
 
-# Split into two groups for parallel GitHub Actions jobs
+# 10 groups — one category each — for maximum parallel GitHub Actions jobs
 CATEGORY_GROUPS = {
-    "A": [
-        "https://www.amazon.eg/s?k=mobile+phones",
-        "https://www.amazon.eg/s?k=laptops",
-        "https://www.amazon.eg/s?k=televisions",
-        "https://www.amazon.eg/s?k=refrigerators",
-        "https://www.amazon.eg/s?k=washing+machines",
-    ],
-    "B": [
-        "https://www.amazon.eg/s?k=air+conditioners",
-        "https://www.amazon.eg/s?k=headphones",
-        "https://www.amazon.eg/s?k=cameras",
-        "https://www.amazon.eg/s?k=tablets",
-        "https://www.amazon.eg/s?k=gaming",
-    ],
+    "A": ["https://www.amazon.eg/s?k=mobile+phones"],
+    "B": ["https://www.amazon.eg/s?k=laptops"],
+    "C": ["https://www.amazon.eg/s?k=televisions"],
+    "D": ["https://www.amazon.eg/s?k=refrigerators"],
+    "E": ["https://www.amazon.eg/s?k=washing+machines"],
+    "F": ["https://www.amazon.eg/s?k=air+conditioners"],
+    "G": ["https://www.amazon.eg/s?k=headphones"],
+    "H": ["https://www.amazon.eg/s?k=cameras"],
+    "I": ["https://www.amazon.eg/s?k=tablets"],
+    "J": ["https://www.amazon.eg/s?k=gaming"],
 }
 
 

@@ -9,11 +9,16 @@ on:
         default: 'Manual run'
 
 jobs:
-  # ── Job A: mobile, laptops, TVs, fridges, washing machines ──────────────────
-  scrape-A:
-    name: Scrape Group A
+  # ── 10 parallel scrape jobs (one category each) ───────────────────────────
+  scrape:
+    name: Scrape Group ${{ matrix.group }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        group: [A, B, C, D, E, F, G, H, I, J]
+      fail-fast: false
+
     steps:
       - uses: actions/checkout@v4
 
@@ -25,45 +30,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run spider (Group A)
-        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg -a group=A -O products_A.json
+      - name: Run spider (Group ${{ matrix.group }})
+        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg -a group=${{ matrix.group }} -O products_${{ matrix.group }}.json
 
-      - name: Upload Group A results
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: products-A
-          path: products_A.json
+          name: products-${{ matrix.group }}
+          path: products_${{ matrix.group }}.json
 
-  # ── Job B: AC, headphones, cameras, tablets, gaming ─────────────────────────
-  scrape-B:
-    name: Scrape Group B
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run spider (Group B)
-        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg -a group=B -O products_B.json
-
-      - name: Upload Group B results
-        uses: actions/upload-artifact@v4
-        with:
-          name: products-B
-          path: products_B.json
-
-  # ── Merge: combine A + B and commit ─────────────────────────────────────────
+  # ── Merge all groups and commit ───────────────────────────────────────────
   merge-and-commit:
     name: Merge & Commit
     runs-on: ubuntu-latest
-    needs: [scrape-A, scrape-B]
+    needs: scrape
     permissions:
       contents: write
     steps:
@@ -73,23 +53,19 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download Group A results
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: products-A
-
-      - name: Download Group B results
-        uses: actions/download-artifact@v4
-        with:
-          name: products-B
+          pattern: products-*
+          merge-multiple: true
 
       - name: Merge JSON files
         run: |
           python - <<'EOF'
-          import json, os
+          import json, glob, os
 
           merged = []
-          for fname in ["products_A.json", "products_B.json"]:
+          for fname in sorted(glob.glob("products_*.json")):
               if os.path.exists(fname):
                   with open(fname, encoding="utf-8") as f:
                       data = json.load(f)
@@ -99,7 +75,7 @@ jobs:
           with open("products_full_data.json", "w", encoding="utf-8") as f:
               json.dump(merged, f, ensure_ascii=False, indent=4)
 
-          print(f"Total merged: {len(merged)} products")
+          print(f"\nTotal merged: {len(merged)} products")
           EOF
 
       - name: Show summary
