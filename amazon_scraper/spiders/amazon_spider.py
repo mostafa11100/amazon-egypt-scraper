@@ -167,13 +167,63 @@ class AmazonEgyptSpider(scrapy.Spider):
 
             availability = response.css("#availability span::text").get(default="Unknown").strip()
 
+            # ── Shipping & seller info ────────────────────────────────────────
+            # delivery date / free shipping message
+            delivery_msg = " ".join(
+                response.css(
+                    "#mir-layout-DELIVERY_BLOCK span.a-text-bold::text, "
+                    "#deliveryMessageMirId::text, "
+                    "#fast-track-message::text"
+                ).getall()
+            ).strip()
+            delivery_date = re.sub(r"\s+", " ", delivery_msg) or "N/A"
+
+            # is shipping free?
+            full_delivery_text = " ".join(
+                response.css(
+                    "#mir-layout-DELIVERY_BLOCK *::text, "
+                    "#deliveryMessageMirId *::text"
+                ).getall()
+            ).lower()
+            shipping_price = "FREE" if "free" in full_delivery_text or "مجاني" in full_delivery_text else (
+                response.css("#price-shipping-message .a-color-secondary::text").get(default="").strip() or "N/A"
+            )
+
+            # prime eligible
+            prime_eligible = "Yes" if response.css(
+                "i.a-icon-prime, #primeBadge_feature_div, #pe-our-price-text"
+            ).get() else "No"
+
+            # ships from / sold by — from the buybox table rows
+            ships_from = "N/A"
+            sold_by     = "N/A"
+            for row in response.css("#tabular-buybox .tabular-buybox-container > div"):
+                label = row.css(".tabular-buybox-text:first-child span::text").get(default="").strip()
+                value = row.css(".tabular-buybox-text:last-child span::text, "
+                                ".tabular-buybox-text:last-child a::text").get(default="").strip()
+                if not value:
+                    continue
+                label_lower = label.lower()
+                if "ships from" in label_lower or "يشحن من" in label_lower:
+                    ships_from = value
+                elif "sold by" in label_lower or "يباع من" in label_lower:
+                    sold_by = value
+
+            # fallback for sold_by
+            if sold_by == "N/A":
+                sold_by = response.css("#merchant-info a::text, #sellerProfileTriggerId::text").get(default="N/A").strip()
+
             self.products_scraped += 1
             self.logger.info(f"[{self.group}][{self.products_scraped}/{PRODUCT_LIMIT}] {title[:60]}")
 
             item = {
                 "asin": asin, "title": title, "brand": brand, "category": category,
                 "price_egp": price, "rating": rating, "reviews_count": reviews_count,
-                "availability": availability, "main_image": main_image,
+                "availability": availability,
+                "shipping_price": shipping_price, "prime_eligible": prime_eligible,
+                "ships_from": ships_from, "sold_by": sold_by,
+                "delivery_date": delivery_date,
+                "main_image": main_image,
                 "all_images": all_images, "description": description,
                 "tech_specs": tech_specs, "variations": variations,
                 "product_url": response.url,

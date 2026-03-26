@@ -74,6 +74,7 @@ jobs:
           columns = [
               "asin", "title", "brand", "category", "price_egp",
               "rating", "reviews_count", "availability",
+              "shipping_price", "prime_eligible", "ships_from", "sold_by", "delivery_date",
               "main_image", "all_images", "description",
               "tech_specs", "variations", "product_url"
           ]
