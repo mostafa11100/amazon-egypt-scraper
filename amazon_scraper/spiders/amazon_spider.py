@@ -1,10 +1,12 @@
 import scrapy
 import re
+import json
+import os
 from scrapy.exceptions import CloseSpider
 
 PRODUCT_LIMIT = 5000
 
-# 10 groups — one category each — for maximum parallel GitHub Actions jobs
+# Fallback hardcoded groups (used if categories.json is not available)
 CATEGORY_GROUPS = {
     "A": ["https://www.amazon.eg/s?k=mobile+phones"],
     "B": ["https://www.amazon.eg/s?k=laptops"],
@@ -24,13 +26,13 @@ class AmazonEgyptSpider(scrapy.Spider):
     allowed_domains = ["amazon.eg"]
 
     custom_settings = {
-        "CONCURRENT_REQUESTS": 16,
-        "DOWNLOAD_DELAY": 0.2,
+        "CONCURRENT_REQUESTS": 32,           # doubled from 16
+        "DOWNLOAD_DELAY": 0.1,               # reduced from 0.2
         "RANDOMIZE_DOWNLOAD_DELAY": True,
         "AUTOTHROTTLE_ENABLED": True,
-        "AUTOTHROTTLE_START_DELAY": 0.2,
+        "AUTOTHROTTLE_START_DELAY": 0.1,
         "AUTOTHROTTLE_MAX_DELAY": 5,
-        "AUTOTHROTTLE_TARGET_CONCURRENCY": 8.0,
+        "AUTOTHROTTLE_TARGET_CONCURRENCY": 16.0,  # doubled from 8
         "COOKIES_ENABLED": False,
         "RETRY_TIMES": 3,
         "RETRY_HTTP_CODES": [429, 503, 500],
@@ -52,28 +54,43 @@ class AmazonEgyptSpider(scrapy.Spider):
         },
     }
 
-    def __init__(self, group="A", *args, **kwargs):
+    def __init__(self, group="A", group_index=None, total_groups="20", *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.group = group.upper()
         self.products_scraped = 0
-        self.start_urls = CATEGORY_GROUPS.get(self.group, CATEGORY_GROUPS["A"])
-        output_file = f"products_{self.group}.json"
-        self.custom_settings["FEEDS"] = {
-            output_file: {
-                "format": "json",
-                "encoding": "utf8",
-                "indent": 4,
-                "overwrite": True,
-            }
-        }
-        self.logger.info(f"Spider started - group={self.group} limit={PRODUCT_LIMIT}")
 
-    # ── Step 1: Category search page ────────────────────────────────────────
+        if group_index is not None and os.path.exists("categories.json"):
+            # ── Dynamic mode: categories discovered by category_spider ───────
+            with open("categories.json", encoding="utf-8") as f:
+                all_cats = json.load(f)
+            gi = int(group_index)
+            tg = int(total_groups)
+            # Round-robin distribution so each group gets an even mix of depts
+            self.start_urls = [c["url"] for i, c in enumerate(all_cats) if i % tg == gi]
+            self.group = str(gi)
+            self.logger.info(
+                f"Dynamic mode — group {gi}/{tg}, "
+                f"{len(self.start_urls)} categories, limit={PRODUCT_LIMIT}"
+            )
+        else:
+            # ── Fallback: hardcoded groups ────────────────────────────────────
+            self.group = group.upper()
+            self.start_urls = CATEGORY_GROUPS.get(self.group, CATEGORY_GROUPS["A"])
+            self.logger.info(
+                f"Fallback mode — group={self.group}, limit={PRODUCT_LIMIT}"
+            )
+
+    # ── Step 1: Category / search page ──────────────────────────────────────
     def parse(self, response):
         if self.products_scraped >= PRODUCT_LIMIT:
             return
 
-        category_name = response.url.split("k=")[-1].replace("+", " ").title()
+        # Extract category name from URL
+        if "k=" in response.url:
+            category_name = response.url.split("k=")[-1].split("&")[0].replace("+", " ").title()
+        elif "i=" in response.url:
+            category_name = response.url.split("i=")[-1].split("&")[0].replace("-", " ").title()
+        else:
+            category_name = response.css("h1.a-size-large::text, h1 span::text").get(default="Unknown").strip()
 
         product_links = response.css(
             "a.a-link-normal.s-no-outline::attr(href), "
@@ -116,28 +133,47 @@ class AmazonEgyptSpider(scrapy.Spider):
             if not title:
                 return
 
+            # ── Price ────────────────────────────────────────────────────────
             price_whole    = response.css("span.a-price-whole::text").get(default="0")
             price_fraction = response.css("span.a-price-fraction::text").get(default="00")
             price = f"{price_whole.strip().replace(',', '')}.{price_fraction.strip()} EGP"
 
+            # Original (before-discount) price
+            original_price = response.css(
+                "span.a-price.a-text-price span.a-offscreen::text"
+            ).get(default="").strip()
+
+            # Discount percentage
+            discount_percent = response.css(
+                ".savingsPercentage::text, "
+                "span.a-color-price.a-size-base.a-text-bold::text"
+            ).get(default="").strip()
+            if "%" not in discount_percent:
+                discount_percent = ""
+
+            # ── Ratings ──────────────────────────────────────────────────────
             rating        = response.css("span.a-icon-alt::text").get(default="No Rating")
             reviews_count = response.css("#acrCustomerReviewText::text").get(default="0 ratings")
 
+            # ── Category breadcrumb ───────────────────────────────────────────
             breadcrumbs = response.css(
                 "#wayfinding-breadcrumbs_feature_div li span a::text"
             ).getall()
             category = " > ".join([b.strip() for b in breadcrumbs]) or response.meta.get("category_name", "Unknown")
 
+            # ── Images ───────────────────────────────────────────────────────
             main_image = response.css(
                 "#imgTagWrapperId img::attr(src), #landingImage::attr(src)"
             ).get(default="")
             all_images = list(set(response.css("img.a-dynamic-image::attr(src)").getall()))
 
+            # ── Description / bullets ─────────────────────────────────────────
             bullets = response.css("#feature-bullets li span.a-list-item::text").getall()
             description = " | ".join(
                 [b.strip() for b in bullets if b.strip() and "›" not in b]
             )
 
+            # ── Tech specs table ──────────────────────────────────────────────
             tech_specs = {}
             for row in response.css(
                 "#productDetails_techSpec_section_1 tr, "
@@ -149,6 +185,22 @@ class AmazonEgyptSpider(scrapy.Spider):
                 if label and value:
                     tech_specs[label.strip()] = re.sub(r"\s+", " ", value)
 
+            # Extract common fields from tech_specs if present
+            def _spec(keys):
+                for k in keys:
+                    for sk, sv in tech_specs.items():
+                        if k.lower() in sk.lower():
+                            return sv
+                return ""
+
+            weight     = _spec(["weight", "الوزن"])
+            dimensions = _spec(["dimension", "الأبعاد", "product dimensions"])
+            model_num  = _spec(["model number", "item model", "رقم الموديل"])
+            country    = _spec(["country of origin", "بلد المنشأ"])
+            warranty   = _spec(["warranty", "الضمان"])
+            date_avail = _spec(["date first available", "تاريخ التوفر"])
+
+            # ── Variations ───────────────────────────────────────────────────
             variations = {}
             variation_labels = response.css("#twister label.a-form-label::text").getall()
             variation_values = response.css(
@@ -160,15 +212,40 @@ class AmazonEgyptSpider(scrapy.Spider):
                     variation_values[i].strip() if i < len(variation_values) else "N/A"
                 )
 
+            # ── Brand / ASIN / Availability ──────────────────────────────────
             brand = response.css("#bylineInfo::text, #brand::text").get(default="").strip()
             asin  = ""
             if "/dp/" in response.url:
                 asin = response.url.split("/dp/")[1].split("/")[0].split("?")[0]
-
             availability = response.css("#availability span::text").get(default="Unknown").strip()
 
-            # ── Shipping & seller info ────────────────────────────────────────
-            # delivery date / free shipping message
+            # ── Extra badges ─────────────────────────────────────────────────
+            amazon_choice = "Yes" if response.css(
+                "#acBadge_feature_div, .ac-badge-wrapper"
+            ).get() else "No"
+
+            best_seller_rank = response.css(
+                "#SalesRank td::text, #SalesRank *::text"
+            ).getall()
+            best_seller_rank = " ".join(best_seller_rank).strip()
+            best_seller_rank = re.sub(r"\s+", " ", best_seller_rank)[:200] if best_seller_rank else ""
+
+            coupon = response.css(
+                "#couponBadge_feature_div span::text, "
+                "label.couponText::text"
+            ).get(default="").strip()
+
+            # ── Shipping & seller ─────────────────────────────────────────────
+            full_delivery_text = " ".join(
+                response.css(
+                    "#mir-layout-DELIVERY_BLOCK *::text, "
+                    "#deliveryMessageMirId *::text"
+                ).getall()
+            ).lower()
+            shipping_price = "FREE" if ("free" in full_delivery_text or "مجاني" in full_delivery_text) else (
+                response.css("#price-shipping-message .a-color-secondary::text").get(default="").strip() or "N/A"
+            )
+
             delivery_msg = " ".join(
                 response.css(
                     "#mir-layout-DELIVERY_BLOCK span.a-text-bold::text, "
@@ -178,55 +255,72 @@ class AmazonEgyptSpider(scrapy.Spider):
             ).strip()
             delivery_date = re.sub(r"\s+", " ", delivery_msg) or "N/A"
 
-            # is shipping free?
-            full_delivery_text = " ".join(
-                response.css(
-                    "#mir-layout-DELIVERY_BLOCK *::text, "
-                    "#deliveryMessageMirId *::text"
-                ).getall()
-            ).lower()
-            shipping_price = "FREE" if "free" in full_delivery_text or "مجاني" in full_delivery_text else (
-                response.css("#price-shipping-message .a-color-secondary::text").get(default="").strip() or "N/A"
-            )
-
-            # prime eligible
             prime_eligible = "Yes" if response.css(
                 "i.a-icon-prime, #primeBadge_feature_div, #pe-our-price-text"
             ).get() else "No"
 
-            # ships from / sold by — from the buybox table rows
             ships_from = "N/A"
-            sold_by     = "N/A"
+            sold_by    = "N/A"
             for row in response.css("#tabular-buybox .tabular-buybox-container > div"):
                 label = row.css(".tabular-buybox-text:first-child span::text").get(default="").strip()
-                value = row.css(".tabular-buybox-text:last-child span::text, "
-                                ".tabular-buybox-text:last-child a::text").get(default="").strip()
+                value = row.css(
+                    ".tabular-buybox-text:last-child span::text, "
+                    ".tabular-buybox-text:last-child a::text"
+                ).get(default="").strip()
                 if not value:
                     continue
-                label_lower = label.lower()
-                if "ships from" in label_lower or "يشحن من" in label_lower:
+                ll = label.lower()
+                if "ships from" in ll or "يشحن" in ll:
                     ships_from = value
-                elif "sold by" in label_lower or "يباع من" in label_lower:
+                elif "sold by" in ll or "يباع" in ll:
                     sold_by = value
 
-            # fallback for sold_by
             if sold_by == "N/A":
-                sold_by = response.css("#merchant-info a::text, #sellerProfileTriggerId::text").get(default="N/A").strip()
+                sold_by = response.css(
+                    "#merchant-info a::text, #sellerProfileTriggerId::text"
+                ).get(default="N/A").strip()
 
+            # ── Yield item ────────────────────────────────────────────────────
             self.products_scraped += 1
             self.logger.info(f"[{self.group}][{self.products_scraped}/{PRODUCT_LIMIT}] {title[:60]}")
 
             item = {
-                "asin": asin, "title": title, "brand": brand, "category": category,
-                "price_egp": price, "rating": rating, "reviews_count": reviews_count,
-                "availability": availability,
-                "shipping_price": shipping_price, "prime_eligible": prime_eligible,
-                "ships_from": ships_from, "sold_by": sold_by,
-                "delivery_date": delivery_date,
-                "main_image": main_image,
-                "all_images": all_images, "description": description,
-                "tech_specs": tech_specs, "variations": variations,
-                "product_url": response.url,
+                "asin":             asin,
+                "title":            title,
+                "brand":            brand,
+                "category":         category,
+                # Price
+                "price_egp":        price,
+                "original_price":   original_price,
+                "discount_percent": discount_percent,
+                # Ratings
+                "rating":           rating,
+                "reviews_count":    reviews_count,
+                # Availability
+                "availability":     availability,
+                "amazon_choice":    amazon_choice,
+                "best_seller_rank": best_seller_rank,
+                "coupon":           coupon,
+                # Shipping
+                "shipping_price":   shipping_price,
+                "prime_eligible":   prime_eligible,
+                "ships_from":       ships_from,
+                "sold_by":          sold_by,
+                "delivery_date":    delivery_date,
+                # Images
+                "main_image":       main_image,
+                "all_images":       all_images,
+                # Details
+                "description":      description,
+                "weight":           weight,
+                "dimensions":       dimensions,
+                "model_number":     model_num,
+                "country_of_origin":country,
+                "warranty":         warranty,
+                "date_first_available": date_avail,
+                "tech_specs":       tech_specs,
+                "variations":       variations,
+                "product_url":      response.url,
             }
 
             if self.products_scraped >= PRODUCT_LIMIT:

@@ -9,14 +9,43 @@ on:
         default: 'Manual run'
 
 jobs:
-  # ── 10 parallel scrape jobs (one category each) ───────────────────────────
+  # ── Step 1: Discover all Amazon Egypt categories ──────────────────────────
+  discover:
+    name: Discover Categories
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run category discovery spider
+        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl category_discovery
+
+      - name: Show discovered categories
+        run: python -c "import json; cats=json.load(open('categories.json')); print(f'Discovered {len(cats)} categories')"
+
+      - name: Upload categories
+        uses: actions/upload-artifact@v4
+        with:
+          name: categories
+          path: categories.json
+
+  # ── Step 2: Scrape products — 20 parallel jobs ────────────────────────────
   scrape:
-    name: Scrape Group ${{ matrix.group }}
+    name: Scrape Group ${{ matrix.group_index }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    needs: discover
     strategy:
       matrix:
-        group: [A, B, C, D, E, F, G, H, I, J]
+        group_index: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
       fail-fast: false
 
     steps:
@@ -30,17 +59,26 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run spider (Group ${{ matrix.group }})
-        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg -a group=${{ matrix.group }} -O products_${{ matrix.group }}.json
+      - name: Download categories
+        uses: actions/download-artifact@v4
+        with:
+          name: categories
+
+      - name: Run spider (Group ${{ matrix.group_index }})
+        run: >
+          PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg
+          -a group_index=${{ matrix.group_index }}
+          -a total_groups=20
+          -O products_${{ matrix.group_index }}.json
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: products-${{ matrix.group }}
-          path: products_${{ matrix.group }}.json
+          name: products-${{ matrix.group_index }}
+          path: products_${{ matrix.group_index }}.json
 
-  # ── Merge all groups → CSV → download ────────────────────────────────────
-  merge-and-export:
+  # ── Step 3: Merge all groups → CSV → download ────────────────────────────
+  export:
     name: Merge & Export CSV
     runs-on: ubuntu-latest
     needs: scrape
@@ -60,22 +98,27 @@ jobs:
           python - <<'EOF'
           import json, glob, os, csv
 
-          # Merge all JSON files
           merged = []
           for fname in sorted(glob.glob("products_*.json")):
               with open(fname, encoding="utf-8") as f:
-                  data = json.load(f)
-                  merged.extend(data)
-                  print(f"{fname}: {len(data)} products")
+                  try:
+                      data = json.load(f)
+                      merged.extend(data)
+                      print(f"{fname}: {len(data)} products")
+                  except Exception as e:
+                      print(f"{fname}: ERROR - {e}")
 
           print(f"\nTotal: {len(merged)} products")
 
-          # Write CSV (flatten nested fields)
           columns = [
-              "asin", "title", "brand", "category", "price_egp",
-              "rating", "reviews_count", "availability",
+              "asin", "title", "brand", "category",
+              "price_egp", "original_price", "discount_percent",
+              "rating", "reviews_count",
+              "availability", "amazon_choice", "best_seller_rank", "coupon",
               "shipping_price", "prime_eligible", "ships_from", "sold_by", "delivery_date",
               "main_image", "all_images", "description",
+              "weight", "dimensions", "model_number", "country_of_origin",
+              "warranty", "date_first_available",
               "tech_specs", "variations", "product_url"
           ]
 
