@@ -4,7 +4,7 @@ import json
 import os
 from scrapy.exceptions import CloseSpider
 
-PRODUCT_LIMIT = 20000
+PRODUCT_LIMIT = 50000
 
 # 27 groups — all Level-1 categories on Amazon Egypt
 CATEGORY_GROUPS = {
