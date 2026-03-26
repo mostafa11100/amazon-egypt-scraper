@@ -4,7 +4,7 @@ import json
 import os
 from scrapy.exceptions import CloseSpider
 
-PRODUCT_LIMIT = 5000
+PRODUCT_LIMIT = 500
 
 # Fallback hardcoded groups (used if categories.json is not available)
 CATEGORY_GROUPS = {
