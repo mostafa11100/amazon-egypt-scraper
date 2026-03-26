@@ -28,7 +28,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run spider (Group A)
-        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg -a group=A
+        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg -a group=A -O products_A.json
 
       - name: Upload Group A results
         uses: actions/upload-artifact@v4
@@ -53,7 +53,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run spider (Group B)
-        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg -a group=B
+        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg -a group=B -O products_B.json
 
       - name: Upload Group B results
         uses: actions/upload-artifact@v4
