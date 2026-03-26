@@ -96,8 +96,8 @@ class CategoryDiscoverySpider(scrapy.Spider):
                 continue
 
             # Remove product count like "(1,234)"
-            name = raw_name.split("\n")[0].strip()
             import re
+            name = raw_name.split("\n")[0].strip()
             name = re.sub(r"\s*\([\d,]+\)\s*$", "", name).strip()
             if not name:
                 continue
@@ -106,7 +106,23 @@ class CategoryDiscoverySpider(scrapy.Spider):
                 href = "https://www.amazon.eg" + href
             if "amazon.eg" not in href:
                 continue
-            if not any(x in href for x in ["/s?", "/b?", "node=", "rh=n"]):
+
+            # ── Skip filter/refinement URLs ──────────────────────────────────
+            # Real categories: /s?i=..., /b?node=..., /s?...&bbn=...
+            # Filters have rh= (refinements like price, brand, shipping)
+            if "rh=" in href and "rh=n%3A" not in href:
+                continue  # price/brand/shipping filter — not a real category
+            if not any(x in href for x in ["/s?", "/b?", "node="]):
+                continue
+
+            # Skip filter-like names (price ranges, shipping options, etc.)
+            skip_patterns = [
+                "EGP & above", "to 25 EGP", "to 50 EGP", "to 100 EGP",
+                "to 200 EGP", "to 300 EGP", "to 400 EGP", "to 500 EGP",
+                "Free Shipping", "Fulfilled by Amazon", "Prime Eligible",
+                "New Arrivals", "Today's Deals",
+            ]
+            if any(p.lower() in name.lower() for p in skip_patterns):
                 continue
 
             full_name = f"{dept} > {name}"
