@@ -6,18 +6,28 @@ from scrapy.exceptions import CloseSpider
 
 PRODUCT_LIMIT = 500
 
-# Fallback hardcoded groups (used if categories.json is not available)
+# 20 groups — rich categories only — guaranteed to have many products
 CATEGORY_GROUPS = {
-    "A": ["https://www.amazon.eg/s?k=mobile+phones"],
-    "B": ["https://www.amazon.eg/s?k=laptops"],
-    "C": ["https://www.amazon.eg/s?k=televisions"],
-    "D": ["https://www.amazon.eg/s?k=refrigerators"],
-    "E": ["https://www.amazon.eg/s?k=washing+machines"],
-    "F": ["https://www.amazon.eg/s?k=air+conditioners"],
-    "G": ["https://www.amazon.eg/s?k=headphones"],
-    "H": ["https://www.amazon.eg/s?k=cameras"],
-    "I": ["https://www.amazon.eg/s?k=tablets"],
-    "J": ["https://www.amazon.eg/s?k=gaming"],
+    "0":  ["https://www.amazon.eg/s?i=mobile"],
+    "1":  ["https://www.amazon.eg/s?i=computers"],
+    "2":  ["https://www.amazon.eg/s?i=electronics"],
+    "3":  ["https://www.amazon.eg/s?i=appliances"],
+    "4":  ["https://www.amazon.eg/s?i=kitchen"],
+    "5":  ["https://www.amazon.eg/s?i=fashion-mens-clothing"],
+    "6":  ["https://www.amazon.eg/s?i=fashion-womens-clothing"],
+    "7":  ["https://www.amazon.eg/s?i=fashion-girls-clothing"],
+    "8":  ["https://www.amazon.eg/s?i=shoes"],
+    "9":  ["https://www.amazon.eg/s?i=beauty"],
+    "10": ["https://www.amazon.eg/s?i=hpc"],
+    "11": ["https://www.amazon.eg/s?i=sporting-goods"],
+    "12": ["https://www.amazon.eg/s?i=toys-and-games"],
+    "13": ["https://www.amazon.eg/s?i=baby-products"],
+    "14": ["https://www.amazon.eg/s?i=luggage"],
+    "15": ["https://www.amazon.eg/s?i=watches"],
+    "16": ["https://www.amazon.eg/s?i=automotive"],
+    "17": ["https://www.amazon.eg/s?i=office-products"],
+    "18": ["https://www.amazon.eg/s?i=pet-supplies"],
+    "19": ["https://www.amazon.eg/s?i=grocery"],
 }
 
 
@@ -58,26 +68,13 @@ class AmazonEgyptSpider(scrapy.Spider):
         super().__init__(*args, **kwargs)
         self.products_scraped = 0
 
-        if group_index is not None and os.path.exists("categories.json"):
-            # ── Dynamic mode: categories discovered by category_spider ───────
-            with open("categories.json", encoding="utf-8") as f:
-                all_cats = json.load(f)
-            gi = int(group_index)
-            tg = int(total_groups)
-            # Round-robin distribution so each group gets an even mix of depts
-            self.start_urls = [c["url"] for i, c in enumerate(all_cats) if i % tg == gi]
-            self.group = str(gi)
-            self.logger.info(
-                f"Dynamic mode — group {gi}/{tg}, "
-                f"{len(self.start_urls)} categories, limit={PRODUCT_LIMIT}"
-            )
+        if group_index is not None:
+            self.group = str(int(group_index))
         else:
-            # ── Fallback: hardcoded groups ────────────────────────────────────
             self.group = group.upper()
-            self.start_urls = CATEGORY_GROUPS.get(self.group, CATEGORY_GROUPS["A"])
-            self.logger.info(
-                f"Fallback mode — group={self.group}, limit={PRODUCT_LIMIT}"
-            )
+
+        self.start_urls = CATEGORY_GROUPS.get(self.group, list(CATEGORY_GROUPS.values())[0])
+        self.logger.info(f"Group={self.group} | URLs={self.start_urls} | limit={PRODUCT_LIMIT}")
 
     # ── Step 1: Category / search page ──────────────────────────────────────
     def parse(self, response):

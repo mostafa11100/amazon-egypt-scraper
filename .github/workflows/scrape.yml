@@ -9,40 +9,11 @@ on:
         default: 'Manual run'
 
 jobs:
-  # ── Step 1: Discover all Amazon Egypt categories ──────────────────────────
-  discover:
-    name: Discover Categories
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run category discovery spider
-        run: PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl category_discovery
-
-      - name: Show discovered categories
-        run: python -c "import json; cats=json.load(open('categories.json')); print(f'Discovered {len(cats)} categories')"
-
-      - name: Upload categories
-        uses: actions/upload-artifact@v4
-        with:
-          name: categories
-          path: categories.json
-
-  # ── Step 2: Scrape products — 20 parallel jobs ────────────────────────────
+  # ── 20 parallel jobs — one rich category each ─────────────────────────────
   scrape:
     name: Scrape Group ${{ matrix.group_index }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: discover
     strategy:
       matrix:
         group_index: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
@@ -59,16 +30,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Download categories
-        uses: actions/download-artifact@v4
-        with:
-          name: categories
-
       - name: Run spider (Group ${{ matrix.group_index }})
         run: >
           PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg
           -a group_index=${{ matrix.group_index }}
-          -a total_groups=20
           -O products_${{ matrix.group_index }}.json
 
       - name: Upload results
@@ -77,7 +42,7 @@ jobs:
           name: products-${{ matrix.group_index }}
           path: products_${{ matrix.group_index }}.json
 
-  # ── Step 3: Merge all groups → CSV → download ────────────────────────────
+  # ── Merge all groups → CSV → download ────────────────────────────────────
   export:
     name: Merge & Export CSV
     runs-on: ubuntu-latest
@@ -96,7 +61,7 @@ jobs:
       - name: Merge JSON → CSV
         run: |
           python - <<'EOF'
-          import json, glob, os, csv
+          import json, glob, csv
 
           merged = []
           for fname in sorted(glob.glob("products_*.json")):
