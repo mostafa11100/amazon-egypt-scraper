@@ -1,0 +1,61 @@
+name: Amazon Egypt Daily Scraper
+
+on:
+  schedule:
+    # Runs every day at 03:00 UTC (05:00 Cairo time)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual trigger'
+        required: false
+        default: 'Manual run'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Amazon Egypt Scraper
+        run: |
+          cd $GITHUB_WORKSPACE
+          scrapy crawl amazon_eg
+        env:
+          SCRAPY_SETTINGS_MODULE: amazon_scraper.settings
+
+      - name: Show output summary
+        run: |
+          if [ -f products_full_data.json ]; then
+            echo "✅ Scraping completed!"
+            echo "Total products: $(python -c "import json; data=json.load(open('products_full_data.json')); print(len(data))")"
+          else
+            echo "⚠️ No output file found"
+          fi
+
+      - name: Commit and push results
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add products_full_data.json || true
+          git diff --cached --quiet || git commit -m "🤖 Auto-update: Amazon products data $(date +'%Y-%m-%d %H:%M UTC')"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
