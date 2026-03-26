@@ -6,7 +6,7 @@ from scrapy.exceptions import CloseSpider
 
 PRODUCT_LIMIT = 500
 
-# 20 groups — rich categories only — guaranteed to have many products
+# 27 groups — all Level-1 categories on Amazon Egypt
 CATEGORY_GROUPS = {
     "0":  ["https://www.amazon.eg/s?i=mobile"],
     "1":  ["https://www.amazon.eg/s?i=computers"],
@@ -28,6 +28,13 @@ CATEGORY_GROUPS = {
     "17": ["https://www.amazon.eg/s?i=office-products"],
     "18": ["https://www.amazon.eg/s?i=pet-supplies"],
     "19": ["https://www.amazon.eg/s?i=grocery"],
+    "20": ["https://www.amazon.eg/s?i=stripbooks"],
+    "21": ["https://www.amazon.eg/s?i=videogames"],
+    "22": ["https://www.amazon.eg/s?i=tools"],
+    "23": ["https://www.amazon.eg/s?i=musical-instruments"],
+    "24": ["https://www.amazon.eg/s?i=garden"],
+    "25": ["https://www.amazon.eg/s?i=movies-tv"],
+    "26": ["https://www.amazon.eg/s?i=jewelry"],
 }
 
 
