@@ -60,7 +60,7 @@ class AmazonEgyptSpider(scrapy.Spider):
         super().__init__(*args, **kwargs)
         self.group = group.upper()
         self.products_scraped = 0
-        # Output file per group so parallel jobs don't overwrite each other
+        self.start_urls = CATEGORY_GROUPS.get(self.group, CATEGORY_GROUPS["A"])
         output_file = f"products_{self.group}.json"
         self.custom_settings["FEEDS"] = {
             output_file: {
@@ -70,11 +70,7 @@ class AmazonEgyptSpider(scrapy.Spider):
                 "overwrite": True,
             }
         }
-        self.logger.info(f"Spider started — group={self.group} limit={PRODUCT_LIMIT}")
-
-    @property
-    def start_urls(self):
-        return CATEGORY_GROUPS.get(self.group, CATEGORY_GROUPS["A"])
+        self.logger.info(f"Spider started - group={self.group} limit={PRODUCT_LIMIT}")
 
     # ── Step 1: Category search page ────────────────────────────────────────
     def parse(self, response):
