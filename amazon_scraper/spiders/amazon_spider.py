@@ -1,41 +1,42 @@
 import scrapy
 import re
+from scrapy.exceptions import CloseSpider
 
-PRODUCT_LIMIT = 100
+PRODUCT_LIMIT = 500
+
+# Split into two groups for parallel GitHub Actions jobs
+CATEGORY_GROUPS = {
+    "A": [
+        "https://www.amazon.eg/s?k=mobile+phones",
+        "https://www.amazon.eg/s?k=laptops",
+        "https://www.amazon.eg/s?k=televisions",
+        "https://www.amazon.eg/s?k=refrigerators",
+        "https://www.amazon.eg/s?k=washing+machines",
+    ],
+    "B": [
+        "https://www.amazon.eg/s?k=air+conditioners",
+        "https://www.amazon.eg/s?k=headphones",
+        "https://www.amazon.eg/s?k=cameras",
+        "https://www.amazon.eg/s?k=tablets",
+        "https://www.amazon.eg/s?k=gaming",
+    ],
+}
 
 
 class AmazonEgyptSpider(scrapy.Spider):
     name = "amazon_eg"
     allowed_domains = ["amazon.eg"]
 
-    # Known working category search URLs
-    start_urls = [
-        "https://www.amazon.eg/s?k=mobile+phones",
-        "https://www.amazon.eg/s?k=laptops",
-        "https://www.amazon.eg/s?k=televisions",
-        "https://www.amazon.eg/s?k=refrigerators",
-        "https://www.amazon.eg/s?k=washing+machines",
-        "https://www.amazon.eg/s?k=air+conditioners",
-        "https://www.amazon.eg/s?k=headphones",
-        "https://www.amazon.eg/s?k=cameras",
-        "https://www.amazon.eg/s?k=tablets",
-        "https://www.amazon.eg/s?k=gaming",
-    ]
-
     custom_settings = {
-        "FEEDS": {
-            "products_full_data.json": {
-                "format": "json",
-                "encoding": "utf8",
-                "indent": 4,
-                "overwrite": True,
-            }
-        },
-        "CONCURRENT_REQUESTS": 8,
-        "DOWNLOAD_DELAY": 0.5,
+        "CONCURRENT_REQUESTS": 16,
+        "DOWNLOAD_DELAY": 0.2,
         "RANDOMIZE_DOWNLOAD_DELAY": True,
+        "AUTOTHROTTLE_ENABLED": True,
+        "AUTOTHROTTLE_START_DELAY": 0.2,
+        "AUTOTHROTTLE_MAX_DELAY": 5,
+        "AUTOTHROTTLE_TARGET_CONCURRENCY": 8.0,
         "COOKIES_ENABLED": False,
-        "RETRY_TIMES": 2,
+        "RETRY_TIMES": 3,
         "RETRY_HTTP_CODES": [429, 503, 500],
         "LOG_LEVEL": "INFO",
         "DEFAULT_REQUEST_HEADERS": {
@@ -55,16 +56,31 @@ class AmazonEgyptSpider(scrapy.Spider):
         },
     }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, group="A", *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.group = group.upper()
         self.products_scraped = 0
+        # Output file per group so parallel jobs don't overwrite each other
+        output_file = f"products_{self.group}.json"
+        self.custom_settings["FEEDS"] = {
+            output_file: {
+                "format": "json",
+                "encoding": "utf8",
+                "indent": 4,
+                "overwrite": True,
+            }
+        }
+        self.logger.info(f"Spider started — group={self.group} limit={PRODUCT_LIMIT}")
 
-    # ── Step 1: Category search page → extract product links ───────────────
+    @property
+    def start_urls(self):
+        return CATEGORY_GROUPS.get(self.group, CATEGORY_GROUPS["A"])
+
+    # ── Step 1: Category search page ────────────────────────────────────────
     def parse(self, response):
         if self.products_scraped >= PRODUCT_LIMIT:
             return
 
-        # Extract category name from URL keyword
         category_name = response.url.split("k=")[-1].replace("+", " ").title()
 
         product_links = response.css(
@@ -73,13 +89,12 @@ class AmazonEgyptSpider(scrapy.Spider):
         ).getall()
 
         self.logger.info(
-            f"Category '{category_name}': found {len(product_links)} products "
-            f"(scraped so far: {self.products_scraped}/{PRODUCT_LIMIT})"
+            f"[{self.group}] '{category_name}': {len(product_links)} links "
+            f"(scraped: {self.products_scraped}/{PRODUCT_LIMIT})"
         )
 
         for link in product_links:
             if self.products_scraped >= PRODUCT_LIMIT:
-                self.logger.info(f"Reached limit of {PRODUCT_LIMIT} products. Stopping.")
                 return
             if "/dp/" in link:
                 if not link.startswith("http"):
@@ -90,7 +105,6 @@ class AmazonEgyptSpider(scrapy.Spider):
                     meta={"category_name": category_name},
                 )
 
-        # Pagination only if still need more products
         if self.products_scraped < PRODUCT_LIMIT:
             next_page = response.css(
                 "a.s-pagination-next::attr(href), li.a-last a::attr(href)"
@@ -100,7 +114,7 @@ class AmazonEgyptSpider(scrapy.Spider):
                     next_page = "https://www.amazon.eg" + next_page
                 yield scrapy.Request(next_page, callback=self.parse)
 
-    # ── Step 2: Product page → extract full details ─────────────────────────
+    # ── Step 2: Product page ─────────────────────────────────────────────────
     def parse_product(self, response):
         if self.products_scraped >= PRODUCT_LIMIT:
             return
@@ -110,21 +124,17 @@ class AmazonEgyptSpider(scrapy.Spider):
             if not title:
                 return
 
-            price_whole = response.css("span.a-price-whole::text").get(default="0")
+            price_whole    = response.css("span.a-price-whole::text").get(default="0")
             price_fraction = response.css("span.a-price-fraction::text").get(default="00")
             price = f"{price_whole.strip().replace(',', '')}.{price_fraction.strip()} EGP"
 
-            rating = response.css("span.a-icon-alt::text").get(default="No Rating")
-            reviews_count = response.css(
-                "#acrCustomerReviewText::text"
-            ).get(default="0 ratings")
+            rating        = response.css("span.a-icon-alt::text").get(default="No Rating")
+            reviews_count = response.css("#acrCustomerReviewText::text").get(default="0 ratings")
 
             breadcrumbs = response.css(
                 "#wayfinding-breadcrumbs_feature_div li span a::text"
             ).getall()
-            category = " > ".join([b.strip() for b in breadcrumbs]) or response.meta.get(
-                "category_name", "Unknown"
-            )
+            category = " > ".join([b.strip() for b in breadcrumbs]) or response.meta.get("category_name", "Unknown")
 
             main_image = response.css(
                 "#imgTagWrapperId img::attr(src), #landingImage::attr(src)"
@@ -159,35 +169,31 @@ class AmazonEgyptSpider(scrapy.Spider):
                 )
 
             brand = response.css("#bylineInfo::text, #brand::text").get(default="").strip()
-            asin = ""
+            asin  = ""
             if "/dp/" in response.url:
                 asin = response.url.split("/dp/")[1].split("/")[0].split("?")[0]
 
-            availability = response.css(
-                "#availability span::text"
-            ).get(default="Unknown").strip()
+            availability = response.css("#availability span::text").get(default="Unknown").strip()
 
             self.products_scraped += 1
-            self.logger.info(
-                f"[{self.products_scraped}/{PRODUCT_LIMIT}] {title[:60]}"
-            )
+            self.logger.info(f"[{self.group}][{self.products_scraped}/{PRODUCT_LIMIT}] {title[:60]}")
 
-            yield {
-                "asin": asin,
-                "title": title,
-                "brand": brand,
-                "category": category,
-                "price_egp": price,
-                "rating": rating,
-                "reviews_count": reviews_count,
-                "availability": availability,
-                "main_image": main_image,
-                "all_images": all_images,
-                "description": description,
-                "tech_specs": tech_specs,
-                "variations": variations,
+            item = {
+                "asin": asin, "title": title, "brand": brand, "category": category,
+                "price_egp": price, "rating": rating, "reviews_count": reviews_count,
+                "availability": availability, "main_image": main_image,
+                "all_images": all_images, "description": description,
+                "tech_specs": tech_specs, "variations": variations,
                 "product_url": response.url,
             }
 
+            if self.products_scraped >= PRODUCT_LIMIT:
+                yield item
+                raise CloseSpider(f"[{self.group}] Reached limit of {PRODUCT_LIMIT}")
+
+            yield item
+
+        except CloseSpider:
+            raise
         except Exception as e:
             self.logger.error(f"Error parsing {response.url}: {e}")
