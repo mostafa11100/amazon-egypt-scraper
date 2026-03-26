@@ -7,7 +7,20 @@ PRODUCT_LIMIT = 100
 class AmazonEgyptSpider(scrapy.Spider):
     name = "amazon_eg"
     allowed_domains = ["amazon.eg"]
-    start_urls = ["https://www.amazon.eg/"]
+
+    # Known working category search URLs
+    start_urls = [
+        "https://www.amazon.eg/s?k=mobile+phones",
+        "https://www.amazon.eg/s?k=laptops",
+        "https://www.amazon.eg/s?k=televisions",
+        "https://www.amazon.eg/s?k=refrigerators",
+        "https://www.amazon.eg/s?k=washing+machines",
+        "https://www.amazon.eg/s?k=air+conditioners",
+        "https://www.amazon.eg/s?k=headphones",
+        "https://www.amazon.eg/s?k=cameras",
+        "https://www.amazon.eg/s?k=tablets",
+        "https://www.amazon.eg/s?k=gaming",
+    ]
 
     custom_settings = {
         "FEEDS": {
@@ -46,62 +59,13 @@ class AmazonEgyptSpider(scrapy.Spider):
         super().__init__(*args, **kwargs)
         self.products_scraped = 0
 
-    # ── Step 1: Homepage → extract category links ──────────────────────────
+    # ── Step 1: Category search page → extract product links ───────────────
     def parse(self, response):
-        self.logger.info("Parsing homepage for categories...")
-
-        category_links = response.css(
-            "a[href*='/b?node='], a[href*='/b/?node='], a[href*='node=']::attr(href)"
-        ).getall()
-
-        nav_links = response.css(
-            "#nav-flyout-shopAll a::attr(href), "
-            ".nav-hasPanel a::attr(href), "
-            "a.nav-a::attr(href)"
-        ).getall()
-
-        all_links = list(set(category_links + nav_links))
-        category_urls = []
-
-        for link in all_links:
-            if link and ("node=" in link or "/b?" in link or "/b/" in link):
-                if not link.startswith("http"):
-                    link = "https://www.amazon.eg" + link
-                category_urls.append(link)
-
-        self.logger.info(f"Found {len(category_urls)} category URLs")
-
-        if not category_urls:
-            self.logger.info("Using fallback category list")
-            category_urls = [
-                "https://www.amazon.eg/s?k=mobile+phones",
-                "https://www.amazon.eg/s?k=laptops",
-                "https://www.amazon.eg/s?k=televisions",
-                "https://www.amazon.eg/s?k=refrigerators",
-                "https://www.amazon.eg/s?k=washing+machines",
-                "https://www.amazon.eg/s?k=air+conditioners",
-                "https://www.amazon.eg/s?k=headphones",
-                "https://www.amazon.eg/s?k=cameras",
-                "https://www.amazon.eg/s?k=tablets",
-                "https://www.amazon.eg/s?k=gaming",
-            ]
-
-        for url in category_urls[:10]:
-            yield scrapy.Request(
-                url,
-                callback=self.parse_category,
-                meta={"category_url": url},
-            )
-
-    # ── Step 2: Category page → extract product links ──────────────────────
-    def parse_category(self, response):
         if self.products_scraped >= PRODUCT_LIMIT:
             return
 
-        category_name = (
-            response.css("h1.a-size-large::text, #s-result-count::text").get(default="")
-            or response.url.split("k=")[-1].replace("+", " ").title()
-        )
+        # Extract category name from URL keyword
+        category_name = response.url.split("k=")[-1].replace("+", " ").title()
 
         product_links = response.css(
             "a.a-link-normal.s-no-outline::attr(href), "
@@ -134,13 +98,9 @@ class AmazonEgyptSpider(scrapy.Spider):
             if next_page:
                 if not next_page.startswith("http"):
                     next_page = "https://www.amazon.eg" + next_page
-                yield scrapy.Request(
-                    next_page,
-                    callback=self.parse_category,
-                    meta={"category_url": response.meta.get("category_url", "")},
-                )
+                yield scrapy.Request(next_page, callback=self.parse)
 
-    # ── Step 3: Product page → extract full details ─────────────────────────
+    # ── Step 2: Product page → extract full details ─────────────────────────
     def parse_product(self, response):
         if self.products_scraped >= PRODUCT_LIMIT:
             return
@@ -155,7 +115,9 @@ class AmazonEgyptSpider(scrapy.Spider):
             price = f"{price_whole.strip().replace(',', '')}.{price_fraction.strip()} EGP"
 
             rating = response.css("span.a-icon-alt::text").get(default="No Rating")
-            reviews_count = response.css("#acrCustomerReviewText::text").get(default="0 ratings")
+            reviews_count = response.css(
+                "#acrCustomerReviewText::text"
+            ).get(default="0 ratings")
 
             breadcrumbs = response.css(
                 "#wayfinding-breadcrumbs_feature_div li span a::text"
@@ -201,10 +163,14 @@ class AmazonEgyptSpider(scrapy.Spider):
             if "/dp/" in response.url:
                 asin = response.url.split("/dp/")[1].split("/")[0].split("?")[0]
 
-            availability = response.css("#availability span::text").get(default="Unknown").strip()
+            availability = response.css(
+                "#availability span::text"
+            ).get(default="Unknown").strip()
 
             self.products_scraped += 1
-            self.logger.info(f"[{self.products_scraped}/{PRODUCT_LIMIT}] Scraped: {title[:60]}")
+            self.logger.info(
+                f"[{self.products_scraped}/{PRODUCT_LIMIT}] {title[:60]}"
+            )
 
             yield {
                 "asin": asin,
