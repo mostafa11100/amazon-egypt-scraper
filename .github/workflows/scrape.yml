@@ -56,6 +56,14 @@ jobs:
           name: products-${{ matrix.group_index }}
           path: products_${{ matrix.group_index }}.json
 
+      - name: Upload debug HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-${{ matrix.group_index }}
+          path: debug_${{ matrix.group_index }}.html
+          if-no-files-found: ignore
+
   # ── Merge all groups → CSV → download ────────────────────────────────────
   export:
     name: Merge & Export CSV

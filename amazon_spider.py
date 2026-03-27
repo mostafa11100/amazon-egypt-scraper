@@ -242,9 +242,24 @@ def scrape_group(group_index, limit=PRODUCT_LIMIT):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(1)
 
-            html     = page.content()
+            html  = page.content()
+            title = page.title()
+            print(f"  Title: {title[:100]}")
+            print(f"  HTML length: {len(html)}")
+
+            # Save first page for inspection
+            if page_num == 1:
+                with open(f"debug_{group_index}.html", "w", encoding="utf-8") as fh:
+                    fh.write(html)
+
+            # Count cards with various selectors to diagnose
+            from scrapy import Selector as _S
+            _sel = _S(text=html)
+            print(f"  s-search-result divs: {len(_sel.css('div[data-component-type=s-search-result]'))}")
+            print(f"  s-result-item divs:   {len(_sel.css('div[data-asin]'))}")
+
             products = extract_products(html, cat_name)
-            print(f"  Found {len(products)} cards")
+            print(f"  Extracted: {len(products)} cards")
 
             new_count = 0
             for p in products:
