@@ -11,7 +11,7 @@ on:
         default: 'Manual run'
 
 jobs:
-  # ── 20 parallel jobs — one rich category each ─────────────────────────────
+  # ── 27 parallel jobs — one category each ─────────────────────────────────
   scrape:
     name: Scrape Group ${{ matrix.group_index }}
     runs-on: ubuntu-latest
@@ -30,17 +30,25 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
 
       - name: Stagger start
         run: sleep $((RANDOM % 60 + 30))
 
+      - name: Start virtual display (Xvfb) so browser appears headed
+        run: |
+          sudo apt-get install -y xvfb > /dev/null 2>&1
+          Xvfb :99 -screen 0 1920x1080x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+
       - name: Run spider (Group ${{ matrix.group_index }})
-        run: >
-          PYTHONPATH=$GITHUB_WORKSPACE scrapy crawl amazon_eg
-          -a group_index=${{ matrix.group_index }}
-          -O products_${{ matrix.group_index }}.json
+        env:
+          DISPLAY: :99
+        run: python amazon_spider.py --group_index ${{ matrix.group_index }} --limit 2000
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -64,7 +72,7 @@ jobs:
           pattern: products-*
           merge-multiple: true
 
-      - name: Merge JSON → CSV
+      - name: Merge JSON -> CSV
         run: |
           python - <<'EOF'
           import json, glob, csv
@@ -82,25 +90,17 @@ jobs:
           print(f"\nTotal: {len(merged)} products")
 
           columns = [
-              "asin", "title", "brand", "category",
-              "price_egp", "original_price", "discount_percent",
+              "platform", "asin", "title", "brand", "category",
+              "current_price", "original_price", "discount",
               "rating", "reviews_count",
-              "availability", "amazon_choice", "best_seller_rank", "coupon",
-              "shipping_price", "prime_eligible", "ships_from", "sold_by", "delivery_date",
-              "main_image", "all_images", "description",
-              "weight", "dimensions", "model_number", "country_of_origin",
-              "warranty", "date_first_available",
-              "tech_specs", "variations", "product_url"
+              "prime_eligible", "amazon_choice", "sponsored",
+              "main_image", "product_url", "scraped_at",
           ]
 
           with open("amazon_products.csv", "w", encoding="utf-8-sig", newline="") as f:
               writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
               writer.writeheader()
-              for item in merged:
-                  item["all_images"] = " | ".join(item.get("all_images", []))
-                  item["tech_specs"] = json.dumps(item.get("tech_specs", {}), ensure_ascii=False)
-                  item["variations"] = json.dumps(item.get("variations", {}), ensure_ascii=False)
-                  writer.writerow(item)
+              writer.writerows(merged)
 
           print("CSV saved: amazon_products.csv")
           EOF
@@ -115,11 +115,11 @@ jobs:
       - name: Summary
         run: |
           COUNT=$(python -c "import csv; r=list(csv.DictReader(open('amazon_products.csv',encoding='utf-8-sig'))); print(len(r))")
-          echo "## ✅ Scraping Complete" >> $GITHUB_STEP_SUMMARY
+          echo "## Amazon Scraping Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Total products scraped:** $COUNT" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📥 How to download the CSV" >> $GITHUB_STEP_SUMMARY
+          echo "### How to download the CSV" >> $GITHUB_STEP_SUMMARY
           echo "1. Go to the **Actions** tab in this repository" >> $GITHUB_STEP_SUMMARY
           echo "2. Click on this workflow run" >> $GITHUB_STEP_SUMMARY
           echo "3. Scroll down to **Artifacts**" >> $GITHUB_STEP_SUMMARY
